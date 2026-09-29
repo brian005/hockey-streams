@@ -55,6 +55,13 @@ async function main() {
   await page.goto('https://onhockey.tv/', { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForTimeout(4000);
 
+  const debugTitle = await page.title();
+  const debugLength = await page.evaluate(() => document.documentElement.innerHTML.length);
+  const debugGamelinks = await page.evaluate(() => document.querySelectorAll('div.gamelinks').length);
+  console.log(`Page title: ${debugTitle}`);
+  console.log(`HTML length: ${debugLength}`);
+  console.log(`gamelinks found: ${debugGamelinks}`);
+
   const rawGames = await page.evaluate(() => {
     const results = [];
     const seen = new Set();
