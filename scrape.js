@@ -55,12 +55,25 @@ async function main() {
   await page.goto('https://onhockey.tv/', { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForTimeout(4000);
 
-  const debugTitle = await page.title();
-  const debugLength = await page.evaluate(() => document.documentElement.innerHTML.length);
-  const debugGamelinks = await page.evaluate(() => document.querySelectorAll('div.gamelinks').length);
-  console.log(`Page title: ${debugTitle}`);
-  console.log(`HTML length: ${debugLength}`);
-  console.log(`gamelinks found: ${debugGamelinks}`);
+  // Wait for the game list to appear. If it never does, this throws.
+try {
+  await page.waitForSelector('div.gamelinks', { timeout: 30000 });
+} catch (e) {
+  console.log('WAIT FAILED: div.gamelinks never appeared within 30s');
+  console.log('Page title:', await page.title());
+  console.log('HTML length:', await page.evaluate(() => document.documentElement.innerHTML.length));
+  console.log('Body preview:\n' + await page.evaluate(() => document.body.innerText.slice(0, 800)));
+  console.log('Network requests seen:');
+  // Dump any XHR/fetch requests that might be the game-list API
+  await page.evaluate(() => {
+    return performance.getEntriesByType('resource')
+      .filter(r => r.initiatorType === 'xmlhttprequest' || r.initiatorType === 'fetch')
+      .map(r => r.name);
+  }).then(urls => console.log(urls.join('\n')));
+  throw e;
+}
+
+console.log('div.gamelinks appeared');
 
   const rawGames = await page.evaluate(() => {
     const results = [];
