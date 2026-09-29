@@ -1,0 +1,12 @@
+{
+  "name": "onhockey-sheet-sync",
+  "version": "1.0.0",
+  "main": "scrape.js",
+  "scripts": {
+    "scrape": "node scrape.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "googleapis": "^126.0.0"
+  }
+}
