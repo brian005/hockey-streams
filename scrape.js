@@ -57,7 +57,7 @@ async function main() {
 
   // Wait for the game list to appear. If it never does, this throws.
 try {
-  await page.waitForSelector('div.gamelinks', { timeout: 30000 });
+  await page.waitForSelector('div.gamelinks', { state: 'attached', timeout: 30000 });
 } catch (e) {
   console.log('WAIT FAILED: div.gamelinks never appeared within 30s');
   console.log('Page title:', await page.title());
