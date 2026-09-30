@@ -14,20 +14,20 @@ const NHL_ALIASES = {
   'DET': ['Detroit Red Wings', 'Detroit'],
   'EDM': ['Edmonton Oilers', 'Edmonton'],
   'FLA': ['Florida Panthers', 'Florida'],
-  'LAK': ['Los Angeles Kings', 'Los Angeles', 'LA Kings'],
+  'LAK': ['Los Angeles Kings', 'Los Angeles', 'LA Kings', 'LA'],
   'MIN': ['Minnesota Wild', 'Minnesota'],
-  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal'],
+  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal', 'Montreal Canadiens'],
   'NSH': ['Nashville Predators', 'Nashville'],
-  'NJD': ['New Jersey Devils', 'New Jersey'],
-  'NYI': ['New York Islanders', 'Islanders'],
-  'NYR': ['New York Rangers', 'Rangers'],
+  'NJD': ['New Jersey Devils', 'New Jersey', 'NJ Devils', 'NJ'],
+  'NYI': ['New York Islanders', 'Islanders', 'NY Islanders'],
+  'NYR': ['New York Rangers', 'Rangers', 'NY Rangers'],
   'OTT': ['Ottawa Senators', 'Ottawa'],
   'PHI': ['Philadelphia Flyers', 'Philadelphia'],
   'PIT': ['Pittsburgh Penguins', 'Pittsburgh'],
-  'SJS': ['San Jose Sharks', 'San Jose'],
+  'SJS': ['San Jose Sharks', 'San Jose', 'SJ Sharks', 'SJ'],
   'SEA': ['Seattle Kraken', 'Seattle'],
   'STL': ['St. Louis Blues', 'St Louis Blues', 'St. Louis', 'St Louis'],
-  'TBL': ['Tampa Bay Lightning', 'Tampa Bay'],
+  'TBL': ['Tampa Bay Lightning', 'Tampa Bay', 'TB Lightning', 'TB'],
   'TOR': ['Toronto Maple Leafs', 'Toronto'],
   'UTA': ['Utah Hockey Club', 'Utah', 'Utah HC'],
   'VAN': ['Vancouver Canucks', 'Vancouver'],
@@ -35,7 +35,6 @@ const NHL_ALIASES = {
   'WSH': ['Washington Capitals', 'Washington'],
   'WPG': ['Winnipeg Jets', 'Winnipeg'],
 };
-
 function resolveTeam(name) {
   const n = (name || '').trim();
   if (!n) return null;
