@@ -69,52 +69,65 @@ async function main() {
     console.log(`  HTTP status: ${status}, HTML length: ${htmlLength}`);
 
     games = await page.evaluate(() => {
-      const results = [];
-      const seen = new Set();
+  const results = [];
+  const seen = new Set();
 
-      document.querySelectorAll('div.gamelinks').forEach(div => {
-        const td = div.closest('td');
-        if (!td) return;
+  // Iterate every row in the schedule table. A game row is one whose
+  // first cell text starts with a time like "22:00" or "03:30".
+  document.querySelectorAll('tr').forEach(tr => {
+    const td = tr.querySelector('td');
+    if (!td) return;
 
-        const firstLine = td.innerText.split('\n')[0].trim();
-        if (!firstLine) return;
+    const text = td.innerText.trim();
+    if (!text) return;
 
-        const timeMatch = firstLine.match(/^(\d{1,2}:\d{2})\s*/);
-        const time = timeMatch ? timeMatch[1] : '';
-        const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
+    // Must start with a time "HH:MM"
+    const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
+    if (!timeMatch) return;
 
-        const parts = withoutTime.split(/\s+-\s+/);
-        if (parts.length < 2) return;
-        const away = parts[0].trim();
-        const home = parts[1].trim();
-        if (!away || !home) return;
+    const time = timeMatch[1];
+    const firstLine = text.split('\n')[0].trim();
+    const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
 
-        const key = `${time}|${away}|${home}`;
-        if (seen.has(key)) return;
-        seen.add(key);
+    const parts = withoutTime.split(/\s+-\s+/);
+    if (parts.length < 2) return;
+    const away = parts[0].trim();
+    const home = parts[1].trim();
+    if (!away || !home) return;
 
-        const internalLink = div.querySelector('a[href*="np_stream"], a[href*="np_youtube"]');
-        if (!internalLink) return;
+    const key = `${time}|${away}|${home}`;
+    if (seen.has(key)) return;
+    seen.add(key);
 
-        const href = internalLink.getAttribute('href');
-        const playerUrl = href.startsWith('http')
-          ? href
-          : 'https://onhockey.tv/' + href.replace(/^\//, '');
+    // Optional: does this game have a stream link right now?
+    const gamelinks = td.querySelector('div.gamelinks');
+    const internalLink = gamelinks
+      ? gamelinks.querySelector('a[href*="np_stream"], a[href*="np_youtube"]')
+      : null;
 
-        let channel = '';
-        try {
-          channel = new URL(playerUrl).searchParams.get('channel') || '';
-        } catch (_) {}
+    let playerUrl = '';
+    let channel = '';
+    let linkType = 'none';
 
-        results.push({
-          away, home, time, playerUrl, channel,
-          linkType: href.includes('np_youtube') ? 'youtube' : 'internal',
-          rawFirstLine: firstLine,
-        });
-      });
+    if (internalLink) {
+      const href = internalLink.getAttribute('href');
+      playerUrl = href.startsWith('http')
+        ? href
+        : 'https://onhockey.tv/' + href.replace(/^\//, '');
+      try {
+        channel = new URL(playerUrl).searchParams.get('channel') || '';
+      } catch (_) {}
+      linkType = href.includes('np_youtube') ? 'youtube' : 'internal';
+    }
 
-      return results;
+    results.push({
+      away, home, time, playerUrl, channel, linkType,
+      rawFirstLine: firstLine,
     });
+  });
+
+  return results;
+});
 
     console.log(`  Found ${games.length} games`);
     if (games.length > 0) break;
