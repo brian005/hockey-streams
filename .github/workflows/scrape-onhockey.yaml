@@ -12,7 +12,7 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     container:
-      image: image: mcr.microsoft.com/playwright:v1.63.0-jammy
+      image: mcr.microsoft.com/playwright:v1.63.0-jammy
     steps:
       - name: Checkout
         uses: actions/checkout@v5
