@@ -11,23 +11,14 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.47.0-jammy
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: '20'
-
       - name: Install dependencies
         run: npm install
-
-      - name: Install Playwright system deps
-        run: sudo npx playwright install-deps chromium
-
-      - name: Install Playwright browser
-        run: node ./node_modules/playwright/cli.js install chromium
 
       - name: Run scraper
         env:
