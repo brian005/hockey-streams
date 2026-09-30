@@ -16,7 +16,7 @@ const NHL_ALIASES = {
   'FLA': ['Florida Panthers', 'Florida'],
   'LAK': ['Los Angeles Kings', 'Los Angeles', 'LA Kings', 'LA'],
   'MIN': ['Minnesota Wild', 'Minnesota'],
-  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal', 'Montreal Canadiens'],
+  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal'],
   'NSH': ['Nashville Predators', 'Nashville'],
   'NJD': ['New Jersey Devils', 'New Jersey', 'NJ Devils', 'NJ'],
   'NYI': ['New York Islanders', 'Islanders', 'NY Islanders'],
@@ -35,6 +35,7 @@ const NHL_ALIASES = {
   'WSH': ['Washington Capitals', 'Washington'],
   'WPG': ['Winnipeg Jets', 'Winnipeg'],
 };
+
 function resolveTeam(name) {
   const n = (name || '').trim();
   if (!n) return null;
@@ -42,6 +43,51 @@ function resolveTeam(name) {
     if (aliases.some(a => a.toLowerCase() === n.toLowerCase())) return abbr;
   }
   return null;
+}
+
+// ---- Timezone helpers ----
+
+// Returns the offset (in ms) between the given timezone's wall-clock time and UTC
+// for the moment represented by `date`.
+function offsetMs(date, tz) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const parts = dtf.formatToParts(date);
+  const get = t => Number(parts.find(p => p.type === t).value);
+  const asUTC = Date.UTC(
+    get('year'), get('month') - 1, get('day'),
+    get('hour'), get('minute'), get('second')
+  );
+  return asUTC - date.getTime();
+}
+
+// Convert "HH:MM" (OnHockey's London time, today's date) to "HH:MM" in Vancouver.
+// Handles DST on both sides automatically.
+function londonHHMMToVancouver(londonHHMM) {
+  if (!londonHHMM || !/^\d{1,2}:\d{2}$/.test(londonHHMM)) return londonHHMM;
+
+  const londonToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/London',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+
+  const [hh, mm] = londonHHMM.split(':').map(Number);
+  const [yyyy, mo, dd] = londonToday.split('-').map(Number);
+
+  // First pass: treat the time as UTC, subtract London's offset at that moment
+  let utcMs = Date.UTC(yyyy, mo - 1, dd, hh, mm);
+  utcMs -= offsetMs(new Date(utcMs), 'Europe/London');
+  // Second pass: recalculate with the offset at the adjusted moment (DST safety)
+  utcMs = Date.UTC(yyyy, mo - 1, dd, hh, mm) - offsetMs(new Date(utcMs), 'Europe/London');
+
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Vancouver',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(utcMs));
 }
 
 async function main() {
@@ -123,11 +169,21 @@ async function main() {
 
   await browser.close();
 
+  // Convert times from London (OnHockey) to Vancouver
+  games.forEach(g => {
+    g.timeLondon = g.time;
+    g.timeVancouver = londonHHMMToVancouver(g.time);
+  });
+
+  // Filter to NHL games
   const nhlGames = games
     .map(g => ({ ...g, awayAbbr: resolveTeam(g.away), homeAbbr: resolveTeam(g.home) }))
     .filter(g => g.awayAbbr && g.homeAbbr);
 
   console.log(`Scraped ${games.length} total games; ${nhlGames.length} NHL games`);
+  nhlGames.forEach(g => {
+    console.log(`  ${g.timeVancouver} PT (${g.timeLondon} London) | ${g.awayAbbr} @ ${g.homeAbbr}`);
+  });
 
   if (nhlGames.length === 0) {
     console.log('No NHL games right now — nothing to write.');
@@ -171,14 +227,20 @@ async function main() {
   }
 
   const streamCols = Array.from({ length: maxStreams }, (_, i) => `Stream ${i + 1}`);
-  const header = ['Away', 'Home', 'Away Abbr', 'Home Abbr', 'Time', ...streamCols, 'Stream Count', 'Raw Text', 'Scraped At'];
+  const header = [
+    'Away', 'Home', 'Away Abbr', 'Home Abbr',
+    'Time (PT)', 'Time (London)',
+    ...streamCols,
+    'Stream Count', 'Raw Text', 'Scraped At',
+  ];
 
   const rows = [
     header,
     ...nhlGames.map(g => {
       const streamCells = Array.from({ length: maxStreams }, (_, i) => g.urls[i] || '');
       return [
-        g.away, g.home, g.awayAbbr, g.homeAbbr, g.time,
+        g.away, g.home, g.awayAbbr, g.homeAbbr,
+        g.timeVancouver, g.timeLondon,
         ...streamCells,
         g.urls.length,
         g.rawFirstLine,
