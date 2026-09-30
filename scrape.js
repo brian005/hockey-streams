@@ -16,7 +16,7 @@ const NHL_ALIASES = {
   'FLA': ['Florida Panthers', 'Florida'],
   'LAK': ['Los Angeles Kings', 'Los Angeles', 'LA Kings'],
   'MIN': ['Minnesota Wild', 'Minnesota'],
-  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal'],
+  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal', 'Montréal Canadiens'],
   'NSH': ['Nashville Predators', 'Nashville'],
   'NJD': ['New Jersey Devils', 'New Jersey'],
   'NYI': ['New York Islanders', 'Islanders'],
@@ -49,94 +49,105 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
+    extraHTTPHeaders: {
+      'Referer': 'https://onhockey.tv/',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
   });
   const page = await context.newPage();
 
-  await page.goto('https://onhockey.tv/', { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForTimeout(4000);
+  // Hit the schedule endpoint directly. Retry if we get a stripped response.
+  const SCHEDULE_URL = 'https://onhockey.tv/schedule_table.php?_=' + Date.now();
 
-  // Wait for the game list to appear. If it never does, this throws.
-try {
-  await page.waitForSelector('div.gamelinks', { state: 'attached', timeout: 30000 });
-} catch (e) {
-  console.log('WAIT FAILED: div.gamelinks never appeared within 30s');
-  console.log('Page title:', await page.title());
-  console.log('HTML length:', await page.evaluate(() => document.documentElement.innerHTML.length));
-  console.log('Body preview:\n' + await page.evaluate(() => document.body.innerText.slice(0, 800)));
-  console.log('Network requests seen:');
-  // Dump any XHR/fetch requests that might be the game-list API
-  await page.evaluate(() => {
-    return performance.getEntriesByType('resource')
-      .filter(r => r.initiatorType === 'xmlhttprequest' || r.initiatorType === 'fetch')
-      .map(r => r.name);
-  }).then(urls => console.log(urls.join('\n')));
-  throw e;
-}
+  let games = [];
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    console.log(`Attempt ${attempt}: fetching ${SCHEDULE_URL}`);
+    const response = await page.goto(SCHEDULE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const status = response ? response.status() : 'no response';
+    const htmlLength = await page.evaluate(() => document.documentElement.innerHTML.length);
+    console.log(`  HTTP status: ${status}, HTML length: ${htmlLength}`);
 
-console.log('div.gamelinks appeared');
+    games = await page.evaluate(() => {
+      const results = [];
+      const seen = new Set();
 
-  const rawGames = await page.evaluate(() => {
-    const results = [];
-    const seen = new Set();
+      document.querySelectorAll('div.gamelinks').forEach(div => {
+        const td = div.closest('td');
+        if (!td) return;
 
-    document.querySelectorAll('div.gamelinks').forEach(div => {
-      const td = div.closest('td');
-      if (!td) return;
+        const firstLine = td.innerText.split('\n')[0].trim();
+        if (!firstLine) return;
 
-      const firstLine = td.innerText.split('\n')[0].trim();
-      if (!firstLine) return;
+        const timeMatch = firstLine.match(/^(\d{1,2}:\d{2})\s*/);
+        const time = timeMatch ? timeMatch[1] : '';
+        const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
 
-      const timeMatch = firstLine.match(/^(\d{1,2}:\d{2})\s*/);
-      const time = timeMatch ? timeMatch[1] : '';
-      const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
+        const parts = withoutTime.split(/\s+-\s+/);
+        if (parts.length < 2) return;
+        const away = parts[0].trim();
+        const home = parts[1].trim();
+        if (!away || !home) return;
 
-      const parts = withoutTime.split(/\s+-\s+/);
-      if (parts.length < 2) return;
-      const away = parts[0].trim();
-      const home = parts[1].trim();
-      if (!away || !home) return;
+        const key = `${time}|${away}|${home}`;
+        if (seen.has(key)) return;
+        seen.add(key);
 
-      const key = `${time}|${away}|${home}`;
-      if (seen.has(key)) return;
-      seen.add(key);
+        const internalLink = div.querySelector('a[href*="np_stream"], a[href*="np_youtube"]');
+        if (!internalLink) return;
 
-      const internalLink = div.querySelector('a[href*="np_stream"], a[href*="np_youtube"]');
-      if (!internalLink) return;
+        const href = internalLink.getAttribute('href');
+        const playerUrl = href.startsWith('http')
+          ? href
+          : 'https://onhockey.tv/' + href.replace(/^\//, '');
 
-      const href = internalLink.getAttribute('href');
-      const playerUrl = href.startsWith('http')
-        ? href
-        : 'https://onhockey.tv/' + href.replace(/^\//, '');
+        let channel = '';
+        try {
+          channel = new URL(playerUrl).searchParams.get('channel') || '';
+        } catch (_) {}
 
-      let channel = '';
-      try {
-        channel = new URL(playerUrl).searchParams.get('channel') || '';
-      } catch (_) {}
-
-      results.push({
-        away, home, time, playerUrl, channel,
-        linkType: href.includes('np_youtube') ? 'youtube' : 'internal',
-        rawFirstLine: firstLine,
+        results.push({
+          away, home, time, playerUrl, channel,
+          linkType: href.includes('np_youtube') ? 'youtube' : 'internal',
+          rawFirstLine: firstLine,
+        });
       });
+
+      return results;
     });
 
-    return results;
-  });
+    console.log(`  Found ${games.length} games`);
+    if (games.length > 0) break;
+
+    // Debug dump on empty result
+    const bodyPreview = await page.evaluate(() => document.body.innerText.slice(0, 600));
+    console.log('  Body preview:\n' + bodyPreview);
+
+    if (attempt < 4) {
+      await page.waitForTimeout(3000);
+    }
+  }
 
   await browser.close();
 
-  // Filter to NHL games (both teams must resolve)
-  const nhlGames = rawGames
+  if (games.length === 0) {
+    console.error('Zero games after 4 attempts — OnHockey is returning stripped pages to this IP');
+    process.exit(1);
+  }
+
+  // Filter to NHL games
+  const nhlGames = games
     .map(g => ({ ...g, awayAbbr: resolveTeam(g.away), homeAbbr: resolveTeam(g.home) }))
     .filter(g => g.awayAbbr && g.homeAbbr);
 
-  console.log(`Scraped ${rawGames.length} total games; ${nhlGames.length} NHL games`);
+  console.log(`Scraped ${games.length} total games; ${nhlGames.length} NHL games`);
 
   if (nhlGames.length === 0) {
     console.log('No NHL games right now — nothing to write.');
     return;
   }
 
+  // Write to Google Sheets
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GSHEET_CLIENT_EMAIL,
@@ -158,6 +169,7 @@ console.log('div.gamelinks appeared');
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] },
     });
+    console.log(`Created tab "${tabName}"`);
   } else {
     await sheets.spreadsheets.values.clear({
       spreadsheetId,
