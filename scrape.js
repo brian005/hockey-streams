@@ -58,77 +58,83 @@ async function main() {
   const page = await context.newPage();
 
   const SCHEDULE_URL = 'https://onhockey.tv/schedule_table.php?_=' + Date.now();
+  console.log('Fetching:', SCHEDULE_URL);
 
-  let games = [];
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    console.log(`Attempt ${attempt}: fetching ${SCHEDULE_URL}`);
-    const response = await page.goto(SCHEDULE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const status = response ? response.status() : 'no response';
-    const htmlLength = await page.evaluate(() => document.documentElement.innerHTML.length);
-    console.log(`  HTTP status: ${status}, HTML length: ${htmlLength}`);
+  const response = await page.goto(SCHEDULE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const status = response ? response.status() : 'no response';
+  const htmlLength = await page.evaluate(() => document.documentElement.innerHTML.length);
+  console.log(`HTTP status: ${status}, HTML length: ${htmlLength}`);
 
-    games = await page.evaluate(() => {
-      const results = [];
-      const seen = new Set();
+  const games = await page.evaluate(() => {
+    const results = [];
+    const seen = new Set();
 
-      document.querySelectorAll('tr').forEach(tr => {
-        const td = tr.querySelector('td');
-        if (!td) return;
+    document.querySelectorAll('tr').forEach(tr => {
+      const td = tr.querySelector('td');
+      if (!td) return;
 
-        const text = td.innerText.trim();
-        if (!text) return;
+      const text = td.innerText.trim();
+      if (!text) return;
 
-        const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
-        if (!timeMatch) return;
+      const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
+      if (!timeMatch) return;
 
-        const time = timeMatch[1];
-        const firstLine = text.split('\n')[0].trim();
-        const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
+      const time = timeMatch[1];
+      const firstLine = text.split('\n')[0].trim();
+      const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
 
-        const parts = withoutTime.split(/\s+-\s+/);
-        if (parts.length < 2) return;
-        const away = parts[0].trim();
-        const home = parts[1].trim();
-        if (!away || !home) return;
+      const parts = withoutTime.split(/\s+-\s+/);
+      if (parts.length < 2) return;
+      const away = parts[0].trim();
+      const home = parts[1].trim();
+      if (!away || !home) return;
 
-        const key = `${time}|${away}|${home}`;
-        if (seen.has(key)) return;
-        seen.add(key);
+      const key = `${time}|${away}|${home}`;
+      if (seen.has(key)) return;
+      seen.add(key);
 
-        // Collect ALL stream links for this game (up to 10)
-        const links = td.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
-        const urls = Array.from(links).slice(0, 10).map(a => {
-          const href = a.getAttribute('href');
-          return href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
-        });
-
-        results.push({
-          away, home, time,
-          urls,
-          rawFirstLine: firstLine,
-        });
+      const links = td.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
+      const urls = Array.from(links).slice(0, 10).map(a => {
+        const href = a.getAttribute('href');
+        return href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
       });
 
-      return results;
+      results.push({
+        away, home, time,
+        urls,
+        rawFirstLine: firstLine,
+      });
     });
 
-    console.log(`  Found ${games.length} games`);
-    if (games.length > 0) break;
+    return results;
+  });
 
-    const bodyPreview = await page.evaluate(() => document.body.innerText.slice(0, 600));
-    console.log('  Body preview:\n' + bodyPreview);
+  console.log(`Found ${games.length} games`);
 
-    if (attempt < 4) {
-      await page.waitForTimeout(3000);
-    }
+  // Debug dump if parsing failed but we got a real page
+  if (games.length === 0) {
+    console.log('--- DEBUG: DOM structure dump ---');
+    const structure = await page.evaluate(() => {
+      const trs = Array.from(document.querySelectorAll('tr')).slice(0, 10);
+      return trs.map(tr => ({
+        class: tr.className || '(none)',
+        tdCount: tr.querySelectorAll('td').length,
+        firstTdText: (tr.querySelector('td')?.innerText || '').slice(0, 100).replace(/\n/g, ' | '),
+        trText: (tr.innerText || '').slice(0, 100).replace(/\n/g, ' | '),
+      }));
+    });
+    console.log(JSON.stringify(structure, null, 2));
+
+    console.log('--- DEBUG: body preview (first 1000 chars) ---');
+    const bodyPreview = await page.evaluate(() => document.body.innerText.slice(0, 1000));
+    console.log(bodyPreview);
+
+    await browser.close();
+    console.error('Zero games parsed — see debug dump above');
+    process.exit(1);
   }
 
   await browser.close();
-
-  if (games.length === 0) {
-    console.error('Zero games after 4 attempts — OnHockey is returning stripped pages to this IP');
-    process.exit(1);
-  }
 
   // Filter to NHL games
   const nhlGames = games
@@ -142,10 +148,8 @@ async function main() {
     return;
   }
 
-  // Determine the maximum number of streams across all games
-  const maxStreams = Math.min(10, Math.max(...nhlGames.map(g => g.urls.length)));
+  const maxStreams = Math.min(10, Math.max(1, ...nhlGames.map(g => g.urls.length)));
 
-  // Write to Google Sheets
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GSHEET_CLIENT_EMAIL,
@@ -156,31 +160,30 @@ async function main() {
 
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = process.env.SPREADSHEET_ID;
+
   const today = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/Vancouver',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-}).format(new Date());
-  const tabName = today;
+    timeZone: 'America/Vancouver',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
-  const tabExists = meta.data.sheets.some(s => s.properties.title === tabName);
+  const tabExists = meta.data.sheets.some(s => s.properties.title === today);
 
   if (!tabExists) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
-      requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] },
+      requestBody: { requests: [{ addSheet: { properties: { title: today } } }] },
     });
-    console.log(`Created tab "${tabName}"`);
+    console.log(`Created tab "${today}"`);
   } else {
     await sheets.spreadsheets.values.clear({
       spreadsheetId,
-      range: `${tabName}!A:Z`,
+      range: `${today}!A:Z`,
     });
   }
 
-  // Build header row: Away, Home, Abbrs, Time, then Stream 1..N
   const streamCols = Array.from({ length: maxStreams }, (_, i) => `Stream ${i + 1}`);
   const header = ['Away', 'Home', 'Away Abbr', 'Home Abbr', 'Time', ...streamCols, 'Stream Count', 'Raw Text', 'Scraped At'];
 
@@ -200,12 +203,12 @@ async function main() {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${tabName}!A1`,
+    range: `${today}!A1`,
     valueInputOption: 'RAW',
     requestBody: { values: rows },
   });
 
-  console.log(`Wrote ${rows.length - 1} NHL games with up to ${maxStreams} streams each to tab "${tabName}"`);
+  console.log(`Wrote ${rows.length - 1} NHL games with up to ${maxStreams} streams each to tab "${today}"`);
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
