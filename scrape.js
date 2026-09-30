@@ -16,7 +16,7 @@ const NHL_ALIASES = {
   'FLA': ['Florida Panthers', 'Florida'],
   'LAK': ['Los Angeles Kings', 'Los Angeles', 'LA Kings'],
   'MIN': ['Minnesota Wild', 'Minnesota'],
-  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal', 'Montréal Canadiens'],
+  'MTL': ['Montreal Canadiens', 'Montreal', 'Montréal Canadiens', 'Montréal'],
   'NSH': ['Nashville Predators', 'Nashville'],
   'NJD': ['New Jersey Devils', 'New Jersey'],
   'NYI': ['New York Islanders', 'Islanders'],
@@ -57,7 +57,6 @@ async function main() {
   });
   const page = await context.newPage();
 
-  // Hit the schedule endpoint directly. Retry if we get a stripped response.
   const SCHEDULE_URL = 'https://onhockey.tv/schedule_table.php?_=' + Date.now();
 
   let games = [];
@@ -69,70 +68,53 @@ async function main() {
     console.log(`  HTTP status: ${status}, HTML length: ${htmlLength}`);
 
     games = await page.evaluate(() => {
-  const results = [];
-  const seen = new Set();
+      const results = [];
+      const seen = new Set();
 
-  // Iterate every row in the schedule table. A game row is one whose
-  // first cell text starts with a time like "22:00" or "03:30".
-  document.querySelectorAll('tr').forEach(tr => {
-    const td = tr.querySelector('td');
-    if (!td) return;
+      document.querySelectorAll('tr').forEach(tr => {
+        const td = tr.querySelector('td');
+        if (!td) return;
 
-    const text = td.innerText.trim();
-    if (!text) return;
+        const text = td.innerText.trim();
+        if (!text) return;
 
-    // Must start with a time "HH:MM"
-    const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
-    if (!timeMatch) return;
+        const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
+        if (!timeMatch) return;
 
-    const time = timeMatch[1];
-    const firstLine = text.split('\n')[0].trim();
-    const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
+        const time = timeMatch[1];
+        const firstLine = text.split('\n')[0].trim();
+        const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
 
-    const parts = withoutTime.split(/\s+-\s+/);
-    if (parts.length < 2) return;
-    const away = parts[0].trim();
-    const home = parts[1].trim();
-    if (!away || !home) return;
+        const parts = withoutTime.split(/\s+-\s+/);
+        if (parts.length < 2) return;
+        const away = parts[0].trim();
+        const home = parts[1].trim();
+        if (!away || !home) return;
 
-    const key = `${time}|${away}|${home}`;
-    if (seen.has(key)) return;
-    seen.add(key);
+        const key = `${time}|${away}|${home}`;
+        if (seen.has(key)) return;
+        seen.add(key);
 
-    // Optional: does this game have a stream link right now?
-    const gamelinks = td.querySelector('div.gamelinks');
-    const internalLink = gamelinks
-      ? gamelinks.querySelector('a[href*="np_stream"], a[href*="np_youtube"]')
-      : null;
+        // Collect ALL stream links for this game (up to 10)
+        const links = td.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
+        const urls = Array.from(links).slice(0, 10).map(a => {
+          const href = a.getAttribute('href');
+          return href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
+        });
 
-    let playerUrl = '';
-    let channel = '';
-    let linkType = 'none';
+        results.push({
+          away, home, time,
+          urls,
+          rawFirstLine: firstLine,
+        });
+      });
 
-    if (internalLink) {
-      const href = internalLink.getAttribute('href');
-      playerUrl = href.startsWith('http')
-        ? href
-        : 'https://onhockey.tv/' + href.replace(/^\//, '');
-      try {
-        channel = new URL(playerUrl).searchParams.get('channel') || '';
-      } catch (_) {}
-      linkType = href.includes('np_youtube') ? 'youtube' : 'internal';
-    }
-
-    results.push({
-      away, home, time, playerUrl, channel, linkType,
-      rawFirstLine: firstLine,
+      return results;
     });
-  });
-
-  return results;
-});
 
     console.log(`  Found ${games.length} games`);
     if (games.length > 0) break;
 
-    // Debug dump on empty result
     const bodyPreview = await page.evaluate(() => document.body.innerText.slice(0, 600));
     console.log('  Body preview:\n' + bodyPreview);
 
@@ -159,6 +141,9 @@ async function main() {
     console.log('No NHL games right now — nothing to write.');
     return;
   }
+
+  // Determine the maximum number of streams across all games
+  const maxStreams = Math.min(10, Math.max(...nhlGames.map(g => g.urls.length)));
 
   // Write to Google Sheets
   const auth = new google.auth.GoogleAuth({
@@ -190,13 +175,22 @@ async function main() {
     });
   }
 
+  // Build header row: Away, Home, Abbrs, Time, then Stream 1..N
+  const streamCols = Array.from({ length: maxStreams }, (_, i) => `Stream ${i + 1}`);
+  const header = ['Away', 'Home', 'Away Abbr', 'Home Abbr', 'Time', ...streamCols, 'Stream Count', 'Raw Text', 'Scraped At'];
+
   const rows = [
-    ['Away', 'Home', 'Away Abbr', 'Home Abbr', 'Time', 'Link Type', 'Player URL', 'Channel', 'Raw Text', 'Scraped At'],
-    ...nhlGames.map(g => [
-      g.away, g.home, g.awayAbbr, g.homeAbbr, g.time,
-      g.linkType, g.playerUrl, g.channel, g.rawFirstLine,
-      new Date().toISOString(),
-    ]),
+    header,
+    ...nhlGames.map(g => {
+      const streamCells = Array.from({ length: maxStreams }, (_, i) => g.urls[i] || '');
+      return [
+        g.away, g.home, g.awayAbbr, g.homeAbbr, g.time,
+        ...streamCells,
+        g.urls.length,
+        g.rawFirstLine,
+        new Date().toISOString(),
+      ];
+    }),
   ];
 
   await sheets.spreadsheets.values.update({
@@ -206,7 +200,7 @@ async function main() {
     requestBody: { values: rows },
   });
 
-  console.log(`Wrote ${rows.length - 1} NHL games to tab "${tabName}"`);
+  console.log(`Wrote ${rows.length - 1} NHL games with up to ${maxStreams} streams each to tab "${tabName}"`);
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
