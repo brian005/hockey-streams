@@ -69,21 +69,15 @@ async function main() {
     const results = [];
     const seen = new Set();
 
-    document.querySelectorAll('tr').forEach(tr => {
-      const td = tr.querySelector('td');
-      if (!td) return;
+    document.querySelectorAll('tr.game').forEach(tr => {
+      const cells = tr.querySelectorAll('td');
+      if (cells.length < 2) return;
 
-      const text = td.innerText.trim();
-      if (!text) return;
+      const time = (cells[0].innerText || '').trim();
+      const teamsText = (cells[1].innerText || '').trim();
+      if (!teamsText) return;
 
-      const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*/);
-      if (!timeMatch) return;
-
-      const time = timeMatch[1];
-      const firstLine = text.split('\n')[0].trim();
-      const withoutTime = firstLine.replace(/^\d{1,2}:\d{2}\s*/, '');
-
-      const parts = withoutTime.split(/\s+-\s+/);
+      const parts = teamsText.split(/\s+-\s+/);
       if (parts.length < 2) return;
       const away = parts[0].trim();
       const home = parts[1].trim();
@@ -93,7 +87,7 @@ async function main() {
       if (seen.has(key)) return;
       seen.add(key);
 
-      const links = td.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
+      const links = tr.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
       const urls = Array.from(links).slice(0, 10).map(a => {
         const href = a.getAttribute('href');
         return href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
@@ -102,7 +96,7 @@ async function main() {
       results.push({
         away, home, time,
         urls,
-        rawFirstLine: firstLine,
+        rawFirstLine: `${time}\t${teamsText}`,
       });
     });
 
@@ -111,7 +105,6 @@ async function main() {
 
   console.log(`Found ${games.length} games`);
 
-  // Debug dump if parsing failed but we got a real page
   if (games.length === 0) {
     console.log('--- DEBUG: DOM structure dump ---');
     const structure = await page.evaluate(() => {
@@ -124,11 +117,6 @@ async function main() {
       }));
     });
     console.log(JSON.stringify(structure, null, 2));
-
-    console.log('--- DEBUG: body preview (first 1000 chars) ---');
-    const bodyPreview = await page.evaluate(() => document.body.innerText.slice(0, 1000));
-    console.log(bodyPreview);
-
     await browser.close();
     console.error('Zero games parsed — see debug dump above');
     process.exit(1);
@@ -136,7 +124,6 @@ async function main() {
 
   await browser.close();
 
-  // Filter to NHL games
   const nhlGames = games
     .map(g => ({ ...g, awayAbbr: resolveTeam(g.away), homeAbbr: resolveTeam(g.home) }))
     .filter(g => g.awayAbbr && g.homeAbbr);
