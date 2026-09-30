@@ -2,22 +2,29 @@ name: Scrape OnHockey to Sheets
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # every 6 hours
+    # 17:00 UTC = 10:00 AM PDT (Vancouver summer, Mar–Nov)
+    # 18:00 UTC = 10:00 AM PST (Vancouver winter, Nov–Mar)
+    - cron: '0 17 * * *'
+    - cron: '0 18 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - run: npx playwright install chromium --with-deps
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
 
       - name: Run scraper
         env:
