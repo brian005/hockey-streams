@@ -45,44 +45,19 @@ function resolveTeam(name) {
   return null;
 }
 
-// ---- Timezone helpers ----
+// Convert "HH:MM" (UTC, today's date) to "HH:MM" in Vancouver (PT).
+function utcHHMMToVancouver(utcHHMM) {
+  if (!utcHHMM || !/^\d{1,2}:\d{2}$/.test(utcHHMM)) return utcHHMM;
 
-// Returns the offset (in ms) between the given timezone's wall-clock time and UTC
-// for the moment represented by `date`.
-function offsetMs(date, tz) {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  });
-  const parts = dtf.formatToParts(date);
-  const get = t => Number(parts.find(p => p.type === t).value);
-  const asUTC = Date.UTC(
-    get('year'), get('month') - 1, get('day'),
-    get('hour'), get('minute'), get('second')
-  );
-  return asUTC - date.getTime();
-}
-
-// Convert "HH:MM" (OnHockey's London time, today's date) to "HH:MM" in Vancouver.
-// Handles DST on both sides automatically.
-function londonHHMMToVancouver(londonHHMM) {
-  if (!londonHHMM || !/^\d{1,2}:\d{2}$/.test(londonHHMM)) return londonHHMM;
-
-  const londonToday = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/London',
+  const utcToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'UTC',
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
 
-  const [hh, mm] = londonHHMM.split(':').map(Number);
-  const [yyyy, mo, dd] = londonToday.split('-').map(Number);
+  const [hh, mm] = utcHHMM.split(':').map(Number);
+  const [yyyy, mo, dd] = utcToday.split('-').map(Number);
 
-  // First pass: treat the time as UTC, subtract London's offset at that moment
-  let utcMs = Date.UTC(yyyy, mo - 1, dd, hh, mm);
-  utcMs -= offsetMs(new Date(utcMs), 'Europe/London');
-  // Second pass: recalculate with the offset at the adjusted moment (DST safety)
-  utcMs = Date.UTC(yyyy, mo - 1, dd, hh, mm) - offsetMs(new Date(utcMs), 'Europe/London');
+  const utcMs = Date.UTC(yyyy, mo - 1, dd, hh, mm);
 
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'America/Vancouver',
@@ -169,20 +144,19 @@ async function main() {
 
   await browser.close();
 
-  // Convert times from London (OnHockey) to Vancouver
+  // Convert times from UTC (OnHockey) to Vancouver (PT)
   games.forEach(g => {
-    g.timeLondon = g.time;
-    g.timeVancouver = londonHHMMToVancouver(g.time);
+    g.timeUTC = g.time;
+    g.timeVancouver = utcHHMMToVancouver(g.time);
   });
 
-  // Filter to NHL games
   const nhlGames = games
     .map(g => ({ ...g, awayAbbr: resolveTeam(g.away), homeAbbr: resolveTeam(g.home) }))
     .filter(g => g.awayAbbr && g.homeAbbr);
 
   console.log(`Scraped ${games.length} total games; ${nhlGames.length} NHL games`);
   nhlGames.forEach(g => {
-    console.log(`  ${g.timeVancouver} PT (${g.timeLondon} London) | ${g.awayAbbr} @ ${g.homeAbbr}`);
+    console.log(`  ${g.timeVancouver} PT (${g.timeUTC} UTC) | ${g.awayAbbr} @ ${g.homeAbbr}`);
   });
 
   if (nhlGames.length === 0) {
@@ -205,9 +179,7 @@ async function main() {
 
   const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Vancouver',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
 
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
@@ -229,7 +201,7 @@ async function main() {
   const streamCols = Array.from({ length: maxStreams }, (_, i) => `Stream ${i + 1}`);
   const header = [
     'Away', 'Home', 'Away Abbr', 'Home Abbr',
-    'Time (PT)', 'Time (London)',
+    'Time (PT)', 'Time (UTC)',
     ...streamCols,
     'Stream Count', 'Raw Text', 'Scraped At',
   ];
@@ -240,7 +212,7 @@ async function main() {
       const streamCells = Array.from({ length: maxStreams }, (_, i) => g.urls[i] || '');
       return [
         g.away, g.home, g.awayAbbr, g.homeAbbr,
-        g.timeVancouver, g.timeLondon,
+        g.timeVancouver, g.timeUTC,
         ...streamCells,
         g.urls.length,
         g.rawFirstLine,
