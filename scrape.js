@@ -156,7 +156,12 @@ async function main() {
 
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = process.env.SPREADSHEET_ID;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Vancouver',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
   const tabName = today;
 
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
