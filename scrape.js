@@ -36,6 +36,9 @@ const NHL_ALIASES = {
   'WPG': ['Winnipeg Jets', 'Winnipeg'],
 };
 
+// Only these stream names are kept. Everything else is dropped.
+const WANTED_STREAMS = ['asiria', 'timst', 'slevel', 'fluidtv', 'wcaster', 'alieztv', 'lovecdn'];
+
 function resolveTeam(name) {
   const n = (name || '').trim();
   if (!n) return null;
@@ -85,7 +88,7 @@ async function main() {
   const htmlLength = await page.evaluate(() => document.documentElement.innerHTML.length);
   console.log(`HTTP status: ${status}, HTML length: ${htmlLength}`);
 
-  const games = await page.evaluate(() => {
+  const games = await page.evaluate((wantedNames) => {
     const results = [];
     const seen = new Set();
 
@@ -107,21 +110,26 @@ async function main() {
       if (seen.has(key)) return;
       seen.add(key);
 
-      const links = tr.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]');
-      const urls = Array.from(links).slice(0, 10).map(a => {
+      // Collect only the wanted stream names, in DOM order
+      const streams = [];
+      tr.querySelectorAll('a[href*="np_stream"], a[href*="np_youtube"]').forEach(a => {
+        const rawName = (a.textContent || '').trim();
+        const matchName = rawName.toLowerCase().replace(/:$/, '');
+        if (!wantedNames.includes(matchName)) return;
         const href = a.getAttribute('href');
-        return href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
+        const url = href.startsWith('http') ? href : 'https://onhockey.tv/' + href.replace(/^\//, '');
+        streams.push({ name: rawName, url });
       });
 
       results.push({
         away, home, time,
-        urls,
+        streams: streams.slice(0, 10),
         rawFirstLine: `${time}\t${teamsText}`,
       });
     });
 
     return results;
-  });
+  }, WANTED_STREAMS);
 
   console.log(`Found ${games.length} games`);
 
@@ -156,7 +164,7 @@ async function main() {
 
   console.log(`Scraped ${games.length} total games; ${nhlGames.length} NHL games`);
   nhlGames.forEach(g => {
-    console.log(`  ${g.timeVancouver} PT (${g.timeUTC} UTC) | ${g.awayAbbr} @ ${g.homeAbbr}`);
+    console.log(`  ${g.timeVancouver} PT (${g.timeUTC} UTC) | ${g.awayAbbr} @ ${g.homeAbbr} | streams=${g.streams.length}`);
   });
 
   if (nhlGames.length === 0) {
@@ -164,7 +172,7 @@ async function main() {
     return;
   }
 
-  const maxStreams = Math.min(10, Math.max(1, ...nhlGames.map(g => g.urls.length)));
+  const maxStreams = Math.min(10, Math.max(1, ...nhlGames.map(g => g.streams.length)));
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -198,23 +206,32 @@ async function main() {
     });
   }
 
-  const streamCols = Array.from({ length: maxStreams }, (_, i) => `Stream ${i + 1}`);
+  // Build header: Away, Home, Abbrs, Time (PT), Time (UTC), then Stream N Name / Stream N URL pairs,
+  // then Stream Count, Raw Text, Scraped At
+  const streamHeaders = [];
+  for (let i = 1; i <= maxStreams; i++) {
+    streamHeaders.push(`Stream ${i} Name`, `Stream ${i} URL`);
+  }
   const header = [
     'Away', 'Home', 'Away Abbr', 'Home Abbr',
     'Time (PT)', 'Time (UTC)',
-    ...streamCols,
+    ...streamHeaders,
     'Stream Count', 'Raw Text', 'Scraped At',
   ];
 
   const rows = [
     header,
     ...nhlGames.map(g => {
-      const streamCells = Array.from({ length: maxStreams }, (_, i) => g.urls[i] || '');
+      const streamCells = [];
+      for (let i = 0; i < maxStreams; i++) {
+        const s = g.streams[i];
+        streamCells.push(s ? s.name : '', s ? s.url : '');
+      }
       return [
         g.away, g.home, g.awayAbbr, g.homeAbbr,
         g.timeVancouver, g.timeUTC,
         ...streamCells,
-        g.urls.length,
+        g.streams.length,
         g.rawFirstLine,
         new Date().toISOString(),
       ];
