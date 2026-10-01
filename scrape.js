@@ -37,7 +37,7 @@ const NHL_ALIASES = {
 };
 
 // Only these stream names are kept. Everything else is dropped.
-const WANTED_STREAMS = ['asiria', 'timst', 'slevel', 'fluidtv', 'wcaster', 'alieztv', 'lovecdn'];
+const WANTED_STREAMS = ['asiria', 'timst', 'slevel', 'fluidtv', 'wcaster', 'alieztv', 'lovecdn', 'mtchor'];
 
 function resolveTeam(name) {
   const n = (name || '').trim();
@@ -206,8 +206,6 @@ async function main() {
     });
   }
 
-  // Build header: Away, Home, Abbrs, Time (PT), Time (UTC), then Stream N Name / Stream N URL pairs,
-  // then Stream Count, Raw Text, Scraped At
   const streamHeaders = [];
   for (let i = 1; i <= maxStreams; i++) {
     streamHeaders.push(`Stream ${i} Name`, `Stream ${i} URL`);
